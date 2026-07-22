@@ -7,6 +7,7 @@ import {
   ArrowLeft, Brain, Send, Trash2, CheckCircle, Loader2,
   AlertCircle, ChevronRight, Clock, X, MessageSquare,
   ChevronDown, ChevronUp, Download, FileText, Tag, History,
+  Pin, Search, Printer,
 } from 'lucide-react';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
@@ -66,6 +67,8 @@ export default function PatientDetailPage() {
   const [newNote,       setNewNote]      = useState('');
   const [savingNote,    setSavingNote]   = useState(false);
   const [noteSaved,     setNoteSaved]    = useState(false);
+  const [indSearch,     setIndSearch]    = useState('');
+  const [indPage,       setIndPage]      = useState(5);
   const [msgModal,      setMsgModal]     = useState(false);
   const [msgText,       setMsgText]      = useState('');
   const [sendingMsg,    setSendingMsg]   = useState(false);
@@ -151,6 +154,43 @@ export default function PatientDetailPage() {
     } catch (e: unknown) {
       toast(e instanceof Error ? e.message : 'Error al eliminar indicación', 'error');
     }
+  };
+
+  const handleTogglePin = async (id: string) => {
+    const updated = indications.map(i => i.id === id ? { ...i, pinned: !i.pinned } : i);
+    try {
+      await apiCall('save_professional_notes', { patientUserId, notes: serializeIndications(updated) }, getToken()!);
+      setIndications(updated);
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Error al fijar', 'error');
+    }
+  };
+
+  const handlePrintIndications = () => {
+    const profName = getUser()?.name ?? 'Profesional';
+    const rows = indications.map((ind, i) =>
+      `<div style="margin-bottom:14px;padding:12px;border:1px solid #e5e7eb;border-radius:8px${ind.pinned ? ';border-color:#7C3AED;background:#F5F3FF' : ''}">
+        <div style="font-size:11px;color:#9CA3AF;margin-bottom:6px">
+          ${ind.pinned ? '📌 Fijada · ' : ''}${i === 0 ? '⭐ Más reciente · ' : ''}
+          ${ind.createdAt === new Date(0).toISOString() ? 'Indicación anterior'
+            : new Date(ind.createdAt).toLocaleString('es-MX', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        </div>
+        <div style="font-size:13px;color:#374151;white-space:pre-wrap">${ind.content}</div>
+      </div>`
+    ).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+      <title>Indicaciones — ${data!.name}</title>
+      <style>body{font-family:sans-serif;padding:28px;max-width:680px;margin:0 auto}
+        h1{color:#7C3AED;font-size:20px;margin:0 0 4px}
+        .sub{color:#6B7280;font-size:12px;margin:0 0 20px}
+        @media print{body{padding:16px}}</style>
+    </head><body>
+      <h1>Indicaciones para ${data!.name}</h1>
+      <p class="sub">Generado por ${profName} · ${new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })} · ${indications.length} indicación${indications.length !== 1 ? 'es' : ''}</p>
+      ${rows}
+    </body></html>`;
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 300); }
   };
 
   const handleSendMessage = async () => {
@@ -470,28 +510,92 @@ export default function PatientDetailPage() {
             {/* Historial de indicaciones */}
             {indications.length > 0 && (
               <div className="border-t border-gray-100 pt-4 space-y-3">
-                <p className="text-xs font-medium text-gray-500">Historial de indicaciones</p>
-                {indications.map((ind, idx) => (
-                  <div key={ind.id} className="bg-gray-50 rounded-xl p-3 group">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-gray-500">Historial de indicaciones</p>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        value={indSearch}
+                        onChange={e => { setIndSearch(e.target.value); setIndPage(5); }}
+                        placeholder="Buscar…"
+                        className="pl-6 pr-2 py-1 text-[11px] border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-prof-400 w-28"
+                      />
+                    </div>
+                    <button
+                      onClick={handlePrintIndications}
+                      className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                      title="Imprimir / exportar PDF"
+                    >
+                      <Printer size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Indicación fijada (siempre visible) */}
+                {indications.filter(i => i.pinned).map(ind => (
+                  <div key={`pin-${ind.id}`} className="bg-prof-50 border border-prof-200 rounded-xl p-3 group">
                     <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <p className="text-[10px] text-gray-400">
-                        {ind.createdAt === new Date(0).toISOString()
-                          ? 'Indicación anterior'
-                          : new Date(ind.createdAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-                        }
-                        {idx === 0 && <span className="ml-1.5 text-prof-600 font-semibold">· Más reciente</span>}
-                      </p>
-                      <button
-                        onClick={() => handleDeleteIndication(ind.id)}
-                        className="text-gray-300 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
-                        title="Eliminar esta indicación"
-                      >
-                        <Trash2 size={13} />
+                      <div className="flex items-center gap-1.5">
+                        <Pin size={10} className="text-prof-500 fill-prof-400" />
+                        <p className="text-[10px] text-prof-600 font-semibold">Indicación fijada</p>
+                        <span className="text-[10px] text-gray-400">·
+                          {ind.createdAt === new Date(0).toISOString() ? ' Anterior'
+                            : ' ' + new Date(ind.createdAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', year: '2-digit' })}
+                        </span>
+                      </div>
+                      <button onClick={() => handleTogglePin(ind.id)} className="text-prof-400 hover:text-gray-400 opacity-0 group-hover:opacity-100 transition-colors" title="Desfijar">
+                        <Pin size={12} />
                       </button>
                     </div>
-                    <p className="text-xs text-gray-700 whitespace-pre-wrap">{ind.content}</p>
+                    <p className="text-xs text-prof-800 whitespace-pre-wrap">{ind.content}</p>
                   </div>
                 ))}
+
+                {/* Lista paginada */}
+                {(() => {
+                  const filtered = indications.filter(ind =>
+                    !indSearch.trim() || ind.content.toLowerCase().includes(indSearch.toLowerCase())
+                  );
+                  const visible = filtered.slice(0, indPage);
+                  return (
+                    <>
+                      {visible.map((ind, idx) => (
+                        <div key={ind.id} className={`rounded-xl p-3 group ${ind.pinned ? 'opacity-50' : 'bg-gray-50'}`}>
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <p className="text-[10px] text-gray-400">
+                              {ind.createdAt === new Date(0).toISOString()
+                                ? 'Indicación anterior'
+                                : new Date(ind.createdAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              {idx === 0 && !indSearch && <span className="ml-1.5 text-prof-600 font-semibold">· Más reciente</span>}
+                            </p>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                              <button onClick={() => handleTogglePin(ind.id)} className={`transition-colors ${ind.pinned ? 'text-prof-400' : 'text-gray-300 hover:text-prof-400'}`} title={ind.pinned ? 'Desfijar' : 'Fijar indicación'}>
+                                <Pin size={12} className={ind.pinned ? 'fill-prof-400' : ''} />
+                              </button>
+                              <button onClick={() => handleDeleteIndication(ind.id)} className="text-gray-300 hover:text-red-400 transition-colors" title="Eliminar">
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-700 whitespace-pre-wrap">{ind.content}</p>
+                        </div>
+                      ))}
+                      {filtered.length > indPage && (
+                        <button
+                          onClick={() => setIndPage(n => n + 5)}
+                          className="w-full py-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium border border-dashed border-prof-200 rounded-xl hover:bg-prof-50 transition-colors"
+                        >
+                          Ver {Math.min(5, filtered.length - indPage)} más de {filtered.length - indPage} restantes
+                        </button>
+                      )}
+                      {filtered.length === 0 && (
+                        <p className="text-xs text-gray-400 text-center py-2">Sin resultados para "{indSearch}"</p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
           </div>

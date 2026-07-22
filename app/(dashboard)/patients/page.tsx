@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Users, Search, RefreshCw, UserPlus, X, AlertCircle,
-  Clock, ChevronRight, TrendingUp, TrendingDown, Minus, Activity, Tag, LayoutGrid, List, Send,
+  Clock, ChevronRight, TrendingUp, TrendingDown, Minus, Activity, Tag, LayoutGrid, List, Send, MessageSquare, Loader2,
 } from 'lucide-react';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
@@ -24,19 +25,24 @@ type FilterType = 'all' | 'today' | 'week' | 'inactive';
 type SortBy     = 'lastActivity' | 'name' | 'kcalPct';
 
 export default function PatientsPage() {
-  const [patients,    setPatients]    = useState<PatientSummary[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [error,       setError]       = useState('');
-  const [search,      setSearch]      = useState('');
-  const [filter,      setFilter]      = useState<FilterType>('all');
-  const [sortBy,      setSortBy]      = useState<SortBy>('lastActivity');
-  const [tagsMap,     setTagsMap]     = useState<Record<number, string[]>>({});
-  const [viewMode,    setViewMode]    = useState<'cards' | 'table'>('cards');
-  const [linkModal,   setLinkModal]   = useState(false);
-  const [linkCode,    setLinkCode]    = useState('');
-  const [linking,     setLinking]     = useState(false);
-  const [linkError,   setLinkError]   = useState('');
-  const [linkSuccess, setLinkSuccess] = useState('');
+  const router = useRouter();
+  const [patients,      setPatients]      = useState<PatientSummary[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState('');
+  const [search,        setSearch]        = useState('');
+  const [filter,        setFilter]        = useState<FilterType>('all');
+  const [sortBy,        setSortBy]        = useState<SortBy>('lastActivity');
+  const [tagsMap,       setTagsMap]       = useState<Record<number, string[]>>({});
+  const [viewMode,      setViewMode]      = useState<'cards' | 'table'>('cards');
+  const [linkModal,     setLinkModal]     = useState(false);
+  const [linkCode,      setLinkCode]      = useState('');
+  const [linking,       setLinking]       = useState(false);
+  const [linkError,     setLinkError]     = useState('');
+  const [linkSuccess,   setLinkSuccess]   = useState('');
+  const [quickMsg,      setQuickMsg]      = useState<{ id: number; name: string } | null>(null);
+  const [quickMsgText,  setQuickMsgText]  = useState('');
+  const [sendingQuick,  setSendingQuick]  = useState(false);
+  const [quickMsgDone,  setQuickMsgDone]  = useState(false);
 
   const today   = new Date().toISOString().split('T')[0];
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
@@ -85,6 +91,17 @@ export default function PatientsPage() {
   const activeToday = patients.filter(p => p.lastLogDate === today).length;
   const activeWeek  = patients.filter(p => p.lastLogDate && p.lastLogDate >= weekAgo && p.lastLogDate < today).length;
   const inactive    = patients.filter(p => !p.lastLogDate || p.lastLogDate < weekAgo).length;
+
+  const handleQuickMsg = async () => {
+    if (!quickMsg || !quickMsgText.trim()) return;
+    setSendingQuick(true);
+    try {
+      await apiCall('send_direct_message', { patientUserId: quickMsg.id, message: quickMsgText.trim() }, getToken()!);
+      setQuickMsgDone(true);
+      setTimeout(() => { setQuickMsg(null); setQuickMsgText(''); setQuickMsgDone(false); }, 1500);
+    } catch { /* silencioso */ }
+    finally { setSendingQuick(false); }
+  };
 
   const handleLink = async () => {
     if (!linkCode.trim()) return;
@@ -234,12 +251,13 @@ export default function PatientsPage() {
             const lastStr = daysSince(p.lastLogDate);
             const isToday = p.lastLogDate === today;
             const ptags   = tagsMap[p.userId] ?? [];
+            const indDays = daysSinceIndication(p.userId);
 
             return (
-              <Link
+              <div
                 key={p.userId}
-                href={`/patients/${p.userId}`}
-                className="flex items-center gap-4 bg-white border border-gray-100 rounded-xl p-4 hover:border-prof-200 hover:shadow-sm transition-all group"
+                onClick={() => router.push(`/patients/${p.userId}`)}
+                className="flex items-center gap-4 bg-white border border-gray-100 rounded-xl p-4 hover:border-prof-200 hover:shadow-sm transition-all group cursor-pointer"
               >
                 <div className="w-11 h-11 rounded-full bg-prof-100 flex items-center justify-center text-prof-700 font-bold text-base flex-shrink-0">
                   {p.name.charAt(0).toUpperCase()}
@@ -261,23 +279,15 @@ export default function PatientsPage() {
                   </div>
                   <p className="text-xs text-gray-400 truncate">{p.email}</p>
                   <div className="flex items-center gap-3 mt-1">
-                    {(() => {
-                      const days = daysSinceIndication(p.userId);
-                      if (days === null) return null;
-                      if (days === 0) return (
-                        <span className="flex items-center gap-1 text-[10px] font-medium text-prof-600 bg-prof-50 px-1.5 py-0.5 rounded-full">
-                          <Send size={9} /> Ind. hoy
-                        </span>
-                      );
-                      if (days <= 7) return (
-                        <span className="text-[10px] text-prof-500">Ind. hace {days}d</span>
-                      );
-                      return (
-                        <span className="text-[10px] text-orange-500">Ind. hace {days}d</span>
-                      );
-                    })()}
-                  </div>
-                  <div className="flex items-center gap-3 mt-1">
+                    {indDays === null ? null : indDays === 0 ? (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-prof-600 bg-prof-50 px-1.5 py-0.5 rounded-full">
+                        <Send size={9} /> Ind. hoy
+                      </span>
+                    ) : indDays <= 7 ? (
+                      <span className="text-[10px] text-prof-500">Ind. hace {indDays}d</span>
+                    ) : (
+                      <span className="text-[10px] text-orange-500">Ind. hace {indDays}d</span>
+                    )}
                     {pct != null && (
                       <div className="flex items-center gap-1.5">
                         <div className="w-20 h-1.5 rounded-full bg-gray-100 overflow-hidden">
@@ -291,10 +301,46 @@ export default function PatientsPage() {
                     {ptags.length > 2 && <span className="flex items-center gap-1 text-[10px] text-gray-400"><Tag size={9} /> +{ptags.length - 2}</span>}
                   </div>
                 </div>
-                <ChevronRight size={16} className="text-gray-300 group-hover:text-prof-400 transition-colors" />
-              </Link>
+                <button
+                  onClick={e => { e.stopPropagation(); setQuickMsg({ id: p.userId, name: p.name }); setQuickMsgText(''); }}
+                  className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-300 hover:text-blue-500 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                  title="Enviar mensaje rápido"
+                >
+                  <MessageSquare size={14} />
+                </button>
+                <ChevronRight size={16} className="text-gray-300 group-hover:text-prof-400 transition-colors flex-shrink-0" />
+              </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Quick message modal */}
+      {quickMsg && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-gray-900">Mensaje a {quickMsg.name.split(' ')[0]}</h3>
+              <button onClick={() => setQuickMsg(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+            <textarea
+              value={quickMsgText}
+              onChange={e => setQuickMsgText(e.target.value)}
+              rows={3}
+              autoFocus
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 mb-3"
+              placeholder="Escribe tu mensaje…"
+            />
+            {quickMsgDone && <p className="text-sm text-green-600 mb-2 text-center">Mensaje enviado ✓</p>}
+            <button
+              onClick={handleQuickMsg}
+              disabled={sendingQuick || !quickMsgText.trim() || quickMsgDone}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors"
+            >
+              {sendingQuick ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
+              {quickMsgDone ? 'Enviado' : 'Enviar mensaje'}
+            </button>
+          </div>
         </div>
       )}
 

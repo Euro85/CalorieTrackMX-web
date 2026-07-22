@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Users, AlertTriangle, TrendingUp, Activity, RefreshCw,
-  ChevronRight, Loader2, AlertCircle,
+  ChevronRight, Loader2, AlertCircle, Send,
 } from 'lucide-react';
+import { daysSinceIndication } from '@/lib/indicationTracker';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
@@ -136,6 +137,44 @@ export default function DashboardPage() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Sin indicación reciente */}
+      {(() => {
+        const noInd = patients.filter(p => {
+          const days = daysSinceIndication(p.userId);
+          return days === null || days > 14;
+        });
+        if (noInd.length === 0) return null;
+        return (
+          <div className="bg-white rounded-2xl border border-amber-100 p-5 mb-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Send size={15} className="text-amber-500" />
+              <h2 className="font-semibold text-gray-800">Pendientes de indicación</h2>
+              <span className="text-xs bg-amber-100 text-amber-700 font-semibold px-2 py-0.5 rounded-full">{noInd.length}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {noInd.slice(0, 12).map(p => {
+                const days = daysSinceIndication(p.userId);
+                return (
+                  <Link
+                    key={p.userId}
+                    href={`/patients/${p.userId}`}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-50 border border-amber-100 hover:border-amber-300 transition-colors text-xs"
+                  >
+                    <span className="font-semibold text-gray-800 truncate max-w-[120px]">{p.name}</span>
+                    <span className="text-amber-600 flex-shrink-0">
+                      {days === null ? '· Sin indicaciones' : `· hace ${days}d`}
+                    </span>
+                  </Link>
+                );
+              })}
+              {noInd.length > 12 && (
+                <span className="text-xs text-gray-400 self-center">+{noInd.length - 12} más</span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-2 gap-4">
         {/* Alertas */}

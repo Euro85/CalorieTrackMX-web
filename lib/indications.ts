@@ -2,6 +2,7 @@ export interface Indication {
   id: string;
   content: string;
   createdAt: string;
+  pinned?: boolean;
 }
 
 const EPOCH_ISO = new Date(0).toISOString();
