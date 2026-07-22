@@ -1,5 +1,7 @@
-export const API_URL =
-  'https://0xysdofiye.execute-api.us-east-2.amazonaws.com/default/calorietrack-api';
+// Use local proxy in browser to avoid CORS; direct URL only for server-side contexts
+export const API_URL = typeof window !== 'undefined'
+  ? '/api/proxy'
+  : 'https://0xysdofiye.execute-api.us-east-2.amazonaws.com/default/calorietrack-api';
 
 export async function apiCall<T = unknown>(
   action: string,
