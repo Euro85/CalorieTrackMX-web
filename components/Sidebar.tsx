@@ -2,18 +2,33 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Users, LogOut, Settings, Brain, BarChart2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Users, LogOut, Settings, BarChart2, Moon, Sun, FileText } from 'lucide-react';
 import { clearSession, getUser } from '@/lib/auth';
 
 const NAV = [
-  { href: '/patients', icon: Users, label: 'Mis pacientes' },
-  { href: '/settings', icon: Settings, label: 'Ajustes' },
+  { href: '/patients',  icon: Users,     label: 'Mis pacientes' },
+  { href: '/templates', icon: FileText,   label: 'Plantillas' },
+  { href: '/settings',  icon: Settings,   label: 'Ajustes' },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const user = getUser();
+  const [dark, setDark] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('ctmx_theme') === 'dark';
+    setDark(saved);
+  }, []);
+
+  const toggleDark = () => {
+    const next = !dark;
+    setDark(next);
+    localStorage.setItem('ctmx_theme', next ? 'dark' : 'light');
+    document.documentElement.classList.toggle('dark', next);
+  };
 
   const handleLogout = () => {
     clearSession();
@@ -56,8 +71,18 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* User */}
-      <div className="px-3 py-4 border-t border-gray-100">
+      {/* Bottom */}
+      <div className="px-3 py-4 border-t border-gray-100 space-y-1">
+        {/* Dark mode toggle */}
+        <button
+          onClick={toggleDark}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+        >
+          {dark ? <Sun size={16} className="text-yellow-500" /> : <Moon size={16} className="text-gray-400" />}
+          {dark ? 'Modo claro' : 'Modo oscuro'}
+        </button>
+
+        {/* User info */}
         <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl">
           <div className="w-8 h-8 rounded-full bg-prof-100 flex items-center justify-center text-prof-700 font-bold text-sm">
             {user?.name?.charAt(0).toUpperCase() ?? 'P'}
@@ -67,9 +92,10 @@ export default function Sidebar() {
             <p className="text-xs text-gray-400 truncate">{user?.email ?? ''}</p>
           </div>
         </div>
+
         <button
           onClick={handleLogout}
-          className="mt-2 w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
         >
           <LogOut size={16} />
           Cerrar sesión

@@ -5,55 +5,98 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft, Brain, Send, Trash2, Save, CheckCircle, Loader2,
-  AlertCircle, ChevronLeft, ChevronRight, Clock, X, MessageSquare, ChevronDown, ChevronUp
+  AlertCircle, ChevronRight, Clock, X, MessageSquare,
+  ChevronDown, ChevronUp, Download, FileText, Tag, History,
 } from 'lucide-react';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
+import { useToast } from '@/components/Toast';
+import { loadTemplates } from '@/lib/templates';
+import { getPatientTags, setPatientTags, TAG_OPTIONS, TAG_COLORS } from '@/lib/tags';
+import { getSentMessages, addSentMessage } from '@/lib/messageHistory';
 import MacroBar from '@/components/MacroBar';
 import KcalRing from '@/components/KcalRing';
 import WeeklyBarChart from '@/components/WeeklyBarChart';
 import CalendarHeatmap from '@/components/CalendarHeatmap';
+import WeightTrendChart from '@/components/WeightTrendChart';
+import MacroTrendChart from '@/components/MacroTrendChart';
 import type { PatientFullData, DayLog } from '@/lib/types';
+import type { NoteTemplate } from '@/lib/templates';
+import type { SentMessage } from '@/lib/messageHistory';
 
-const GOAL_LABELS: Record<string, string> = {
-  lose: 'Bajar de peso', maintain: 'Mantenimiento', gain: 'Ganar masa',
-};
+const GOAL_LABELS:     Record<string, string> = { lose: 'Bajar de peso', maintain: 'Mantenimiento', gain: 'Ganar masa' };
 const ACTIVITY_LABELS: Record<string, string> = {
-  sedentary: 'Sedentario', light: 'Ligero', moderate: 'Moderado',
-  active: 'Activo', very_active: 'Muy activo',
+  sedentary: 'Sedentario', light: 'Ligero', moderate: 'Moderado', active: 'Activo', very_active: 'Muy activo',
 };
 
-interface NoteHistoryItem {
-  id: number;
-  content: string;
-  savedAt: string;
+interface NoteHistoryItem { id: number; content: string; savedAt: string; }
+
+function exportCSV(data: PatientFullData) {
+  const rows: (string | number)[][] = [
+    ['Fecha', 'Kcal', 'Proteína (g)', 'Carbs (g)', 'Grasas (g)'],
+    ...[...data.recentLogs]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(l => [l.date, Math.round(l.totalKcal), Math.round(l.totalProteinG), Math.round(l.totalCarbsG), Math.round(l.totalFatG)]),
+  ];
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `${data.name.replace(/\s+/g, '_')}_historial.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function PatientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { toast } = useToast();
   const patientUserId = Number(id);
 
-  const [data, setData] = useState<PatientFullData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [notes, setNotes] = useState('');
-  const [savingNotes, setSavingNotes] = useState(false);
-  const [notesSaved, setNotesSaved] = useState(false);
-  const [noteHistory, setNoteHistory] = useState<NoteHistoryItem[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [msgModal, setMsgModal] = useState(false);
-  const [msgText, setMsgText] = useState('');
-  const [sendingMsg, setSendingMsg] = useState(false);
-  const [msgSent, setMsgSent] = useState('');
-  const [revoking, setRevoking] = useState(false);
+  const [data,          setData]         = useState<PatientFullData | null>(null);
+  const [loading,       setLoading]      = useState(true);
+  const [error,         setError]        = useState('');
+  const [notes,         setNotes]        = useState('');
+  const [savingNotes,   setSavingNotes]  = useState(false);
+  const [notesSaved,    setNotesSaved]   = useState(false);
+  const [noteHistory,   setNoteHistory]  = useState<NoteHistoryItem[]>([]);
+  const [showHistory,   setShowHistory]  = useState(false);
+  const [msgModal,      setMsgModal]     = useState(false);
+  const [msgText,       setMsgText]      = useState('');
+  const [sendingMsg,    setSendingMsg]   = useState(false);
+  const [revoking,      setRevoking]     = useState(false);
+
+  // Templates
+  const [templates,     setTemplates]    = useState<NoteTemplate[]>([]);
+  const [showTemplates, setShowTemplates]= useState(false);
+
+  // Tags
+  const [tags,          setTags]         = useState<string[]>([]);
+  const [showTagEdit,   setShowTagEdit]  = useState(false);
+
+  // Message history
+  const [msgHistory,    setMsgHistory]   = useState<SentMessage[]>([]);
+  const [showMsgHist,   setShowMsgHist]  = useState(false);
+
+  const noteHistoryKey = `ctmx_notes_history_${patientUserId}`;
+  const loadNoteHistory = useCallback((): NoteHistoryItem[] => {
+    try { return JSON.parse(localStorage.getItem(noteHistoryKey) ?? '[]'); } catch { return []; }
+  }, [noteHistoryKey]);
+
+  const saveNoteHistory = useCallback((content: string) => {
+    const next: NoteHistoryItem[] = [
+      { id: Date.now(), content, savedAt: new Date().toISOString() },
+      ...loadNoteHistory().slice(0, 19),
+    ];
+    localStorage.setItem(noteHistoryKey, JSON.stringify(next));
+    setNoteHistory(next);
+  }, [noteHistoryKey, loadNoteHistory]);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
-      const token = getToken()!;
-      const result = await apiCall<PatientFullData>('get_patient_data', { patientUserId }, token);
+      const result = await apiCall<PatientFullData>('get_patient_data', { patientUserId }, getToken()!);
       setData(result);
       setNotes(result.professionalNotes ?? '');
     } catch (e: unknown) {
@@ -63,27 +106,18 @@ export default function PatientDetailPage() {
     }
   }, [patientUserId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [load]);
 
-  // Note history from localStorage
-  const noteHistoryKey = `ctmx_notes_history_${patientUserId}`;
-  const loadNoteHistory = () => {
-    try {
-      const raw = localStorage.getItem(noteHistoryKey);
-      return raw ? JSON.parse(raw) as NoteHistoryItem[] : [];
-    } catch { return []; }
-  };
-  const saveNoteHistory = (content: string) => {
-    const prev = loadNoteHistory();
-    const next: NoteHistoryItem[] = [
-      { id: Date.now(), content, savedAt: new Date().toISOString() },
-      ...prev.slice(0, 19),
-    ];
-    localStorage.setItem(noteHistoryKey, JSON.stringify(next));
-    setNoteHistory(next);
-  };
-
-  useEffect(() => { setNoteHistory(loadNoteHistory()); }, [patientUserId]);
+  useEffect(() => {
+    setNoteHistory(loadNoteHistory());
+    setTemplates(loadTemplates());
+    setTags(getPatientTags(patientUserId));
+    setMsgHistory(getSentMessages(patientUserId));
+  }, [patientUserId, loadNoteHistory]);
 
   const handleSaveNotes = async () => {
     if (!notes.trim()) return;
@@ -93,8 +127,9 @@ export default function PatientDetailPage() {
       saveNoteHistory(notes);
       setNotesSaved(true);
       setTimeout(() => setNotesSaved(false), 2500);
+      toast('Indicaciones guardadas correctamente', 'success');
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Error al guardar notas');
+      toast(e instanceof Error ? e.message : 'Error al guardar notas', 'error');
     } finally {
       setSavingNotes(false);
     }
@@ -103,15 +138,17 @@ export default function PatientDetailPage() {
   const handleSendMessage = async () => {
     if (!msgText.trim()) return;
     setSendingMsg(true);
-    setMsgSent('');
     try {
       const res = await apiCall<{ sent: boolean }>('send_direct_message', {
         patientUserId, message: msgText.trim(),
       }, getToken()!);
-      setMsgSent(res.sent ? `Mensaje enviado a ${data?.name.split(' ')[0]}` : 'Mensaje guardado (sin notificación push)');
+      addSentMessage(patientUserId, msgText.trim());
+      setMsgHistory(getSentMessages(patientUserId));
+      setMsgModal(false);
       setMsgText('');
+      toast(res.sent ? `Mensaje enviado a ${data?.name.split(' ')[0]}` : 'Mensaje guardado (sin push)', 'success');
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Error al enviar mensaje');
+      toast(e instanceof Error ? e.message : 'Error al enviar mensaje', 'error');
     } finally {
       setSendingMsg(false);
     }
@@ -122,11 +159,18 @@ export default function PatientDetailPage() {
     setRevoking(true);
     try {
       await apiCall('revoke_professional_access', { targetUserId: patientUserId }, getToken()!);
+      toast('Acceso revocado', 'success');
       router.push('/patients');
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Error al revocar acceso');
+      toast(e instanceof Error ? e.message : 'Error al revocar acceso', 'error');
       setRevoking(false);
     }
+  };
+
+  const toggleTag = (tag: string) => {
+    const next = tags.includes(tag) ? tags.filter(t => t !== tag) : [...tags, tag];
+    setTags(next);
+    setPatientTags(patientUserId, next);
   };
 
   if (loading) return (
@@ -143,44 +187,92 @@ export default function PatientDetailPage() {
     </div>
   );
 
-  const p = data.profile;
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayLog = data.recentLogs.find(l => l.date === todayStr);
+  const p          = data.profile;
+  const todayStr   = new Date().toISOString().split('T')[0];
+  const todayLog   = data.recentLogs.find(l => l.date === todayStr);
   const targetKcal = p?.targetCalories ?? 0;
 
   const imc = (p?.weightKg && p?.heightCm)
     ? (p.weightKg / ((p.heightCm / 100) ** 2)).toFixed(1)
     : null;
-
-  const imcCategory = imc
+  const imcCat = imc
     ? parseFloat(imc) < 18.5 ? { label: 'Bajo peso', color: 'text-blue-600' }
-      : parseFloat(imc) < 25 ? { label: 'Normal', color: 'text-green-600' }
-      : parseFloat(imc) < 30 ? { label: 'Sobrepeso', color: 'text-yellow-600' }
+      : parseFloat(imc) < 25  ? { label: 'Normal',    color: 'text-green-600' }
+      : parseFloat(imc) < 30  ? { label: 'Sobrepeso', color: 'text-yellow-600' }
       : { label: 'Obesidad', color: 'text-red-600' }
     : null;
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Top bar */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-4 mb-4">
         <Link href="/patients" className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors">
           <ArrowLeft size={18} />
         </Link>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-gray-900">{data.name}</h1>
           <p className="text-sm text-gray-400">{data.email}</p>
         </div>
-        <Link
-          href={`/patients/${id}/ai`}
-          className="flex items-center gap-2 bg-prof-600 hover:bg-prof-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
-        >
-          <Brain size={16} />
-          Consultar NutriIA
-        </Link>
+        <div className="flex items-center gap-2">
+          {/* Tags toggle */}
+          <button
+            onClick={() => setShowTagEdit(v => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-500 text-xs font-medium transition-colors"
+          >
+            <Tag size={14} /> Etiquetas
+          </button>
+          {/* Export CSV */}
+          <button
+            onClick={() => exportCSV(data)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-500 text-xs font-medium transition-colors"
+            title="Exportar historial CSV"
+          >
+            <Download size={14} /> CSV
+          </button>
+          {/* PDF print */}
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-500 text-xs font-medium transition-colors"
+            title="Imprimir / guardar PDF"
+          >
+            <FileText size={14} /> PDF
+          </button>
+          <Link
+            href={`/patients/${id}/ai`}
+            className="flex items-center gap-2 bg-prof-600 hover:bg-prof-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+          >
+            <Brain size={16} /> NutriIA
+          </Link>
+        </div>
       </div>
 
+      {/* Tags panel */}
+      {showTagEdit && (
+        <div className="mb-4 bg-white border border-gray-100 rounded-2xl p-4">
+          <p className="text-xs font-semibold text-gray-600 mb-2">Etiquetas del paciente</p>
+          <div className="flex flex-wrap gap-2">
+            {TAG_OPTIONS.map(tag => (
+              <button
+                key={tag}
+                onClick={() => toggleTag(tag)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  tags.includes(tag)
+                    ? `${TAG_COLORS[tag] ?? 'bg-prof-100 text-prof-700'} border-transparent`
+                    : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+          {tags.length > 0 && (
+            <p className="text-[10px] text-gray-400 mt-2">Seleccionadas: {tags.join(', ')}</p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
-        {/* Left column */}
+        {/* ── Left column ── */}
         <div className="col-span-2 space-y-4">
 
           {/* Hoy */}
@@ -192,9 +284,9 @@ export default function PatientDetailPage() {
               <div className="flex gap-5 items-start">
                 <KcalRing consumed={todayLog.totalKcal} target={targetKcal} size={88} />
                 <div className="flex-1 space-y-2.5">
-                  <MacroBar label="Proteína" value={todayLog.totalProteinG} goal={p?.proteinGoalG} color="#3B82F6" />
-                  <MacroBar label="Carbohidratos" value={todayLog.totalCarbsG} goal={p?.carbGoalG} color="#F59E0B" />
-                  <MacroBar label="Grasas" value={todayLog.totalFatG} goal={p?.fatGoalG} color="#EF4444" />
+                  <MacroBar label="Proteína"      value={todayLog.totalProteinG} goal={p?.proteinGoalG} color="#3B82F6" />
+                  <MacroBar label="Carbohidratos" value={todayLog.totalCarbsG}   goal={p?.carbGoalG}    color="#F59E0B" />
+                  <MacroBar label="Grasas"        value={todayLog.totalFatG}     goal={p?.fatGoalG}     color="#EF4444" />
                 </div>
               </div>
             ) : (
@@ -202,18 +294,27 @@ export default function PatientDetailPage() {
             )}
           </div>
 
-          {/* Historial 7 días */}
+          {/* Últimos 7 días */}
           {data.recentLogs.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-100 p-5">
-              <h2 className="font-semibold text-gray-800 mb-3">Últimos 7 días</h2>
+              <h2 className="font-semibold text-gray-800 mb-3">Calorías — últimos 7 días</h2>
               <WeeklyBarChart logs={data.recentLogs} targetKcal={targetKcal || undefined} />
-              {targetKcal > 0 && (
-                <p className="text-xs text-gray-400 text-center mt-1">— Meta: {Math.round(targetKcal)} kcal</p>
-              )}
+              {targetKcal > 0 && <p className="text-xs text-gray-400 text-center mt-1">— Meta: {Math.round(targetKcal)} kcal</p>}
             </div>
           )}
 
-          {/* Días registrados */}
+          {/* Tendencia de macros */}
+          {data.recentLogs.length >= 2 && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-5">
+              <h2 className="font-semibold text-gray-800 mb-3">
+                Tendencia de macros
+                {p?.proteinGoalG && <span className="text-xs text-gray-400 font-normal ml-2">% del objetivo</span>}
+              </h2>
+              <MacroTrendChart logs={data.recentLogs} profile={p} />
+            </div>
+          )}
+
+          {/* Calendario */}
           <div className="bg-white rounded-2xl border border-gray-100 p-5">
             <h2 className="font-semibold text-gray-800 mb-3">Calendario de adherencia</h2>
             <CalendarHeatmap
@@ -223,12 +324,12 @@ export default function PatientDetailPage() {
             />
           </div>
 
-          {/* Días con registros */}
+          {/* Días registrados */}
           {data.recentLogs.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-100 p-5">
               <h2 className="font-semibold text-gray-800 mb-3">Días registrados</h2>
               <div className="space-y-1">
-                {[...data.recentLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(d => {
+                {([...data.recentLogs] as DayLog[]).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(d => {
                   const pct = targetKcal > 0 ? (d.totalKcal / targetKcal) * 100 : 0;
                   return (
                     <Link
@@ -240,13 +341,7 @@ export default function PatientDetailPage() {
                         {new Date(d.date + 'T12:00:00').toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
                       </div>
                       <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${Math.min(pct, 100)}%`,
-                            backgroundColor: pct >= 80 ? '#22C55E' : pct >= 50 ? '#F59E0B' : '#EF4444',
-                          }}
-                        />
+                        <div className="h-full rounded-full" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: pct >= 80 ? '#22C55E' : pct >= 50 ? '#F59E0B' : '#EF4444' }} />
                       </div>
                       <span className="text-xs font-semibold text-gray-700 w-16 text-right">{Math.round(d.totalKcal)} kcal</span>
                       <ChevronRight size={14} className="text-gray-300 group-hover:text-prof-400 transition-colors" />
@@ -257,27 +352,48 @@ export default function PatientDetailPage() {
             </div>
           )}
 
-          {/* Notas + historial */}
+          {/* Notas + plantillas + historial */}
           <div className="bg-white rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold text-gray-800">Mis indicaciones</h2>
-              <Link
-                href={`/patients/${id}/ai`}
-                className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium"
-              >
-                <Brain size={13} />
-                Consultar NutriIA
+              <Link href={`/patients/${id}/ai`} className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium">
+                <Brain size={13} /> Consultar NutriIA
               </Link>
             </div>
-            <p className="text-xs text-gray-400 mb-3">
-              Estas notas se envían como contexto a la IA del paciente: plan, restricciones, objetivos específicos.
-            </p>
+            <p className="text-xs text-gray-400 mb-2">Estas indicaciones se envían como contexto a la IA del paciente.</p>
+
+            {/* Templates */}
+            {templates.length > 0 && (
+              <div className="mb-3">
+                <button
+                  onClick={() => setShowTemplates(v => !v)}
+                  className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium mb-2"
+                >
+                  <FileText size={13} /> Usar plantilla {showTemplates ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+                {showTemplates && (
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {templates.slice(0, 6).map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => { setNotes(t.content); setShowTemplates(false); }}
+                        className="text-left p-2.5 rounded-xl bg-prof-50 border border-prof-100 hover:border-prof-300 transition-colors"
+                      >
+                        <p className="text-xs font-semibold text-prof-700 truncate">{t.title}</p>
+                        <p className="text-[10px] text-prof-500 truncate">{t.content}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <textarea
               value={notes}
               onChange={e => setNotes(e.target.value)}
               rows={5}
               className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 resize-y focus:outline-none focus:ring-2 focus:ring-prof-400"
-              placeholder={`Ej: Paciente en fase de volumen, entrena 4 días/sem. Priorizar proteína ≥${p?.proteinGoalG ? Math.round(p.proteinGoalG) : 150}g/día.`}
+              placeholder={`Ej: Paciente en fase de volumen. Priorizar proteína ≥${p?.proteinGoalG ? Math.round(p.proteinGoalG) : 150}g/día.`}
             />
             <div className="flex items-center justify-between mt-2">
               <span className="text-xs text-gray-400">{notes.length} caracteres</span>
@@ -298,22 +414,17 @@ export default function PatientDetailPage() {
                   onClick={() => setShowHistory(v => !v)}
                   className="flex items-center gap-2 text-xs font-medium text-gray-500 hover:text-gray-700"
                 >
-                  <Clock size={13} />
-                  Historial de indicaciones ({noteHistory.length})
-                  {showHistory ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  <Clock size={13} /> Historial ({noteHistory.length}) {showHistory ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                 </button>
                 {showHistory && (
-                  <div className="mt-3 space-y-3">
+                  <div className="mt-3 space-y-2">
                     {noteHistory.slice(0, 5).map(n => (
                       <div key={n.id} className="bg-gray-50 rounded-xl p-3">
                         <p className="text-[10px] text-gray-400 mb-1">
                           {new Date(n.savedAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
                         </p>
                         <p className="text-xs text-gray-600 line-clamp-3">{n.content}</p>
-                        <button
-                          onClick={() => { setNotes(n.content); setShowHistory(false); }}
-                          className="mt-1.5 text-[10px] text-prof-600 hover:text-prof-700 font-medium"
-                        >
+                        <button onClick={() => { setNotes(n.content); setShowHistory(false); }} className="mt-1.5 text-[10px] text-prof-600 hover:text-prof-700 font-medium">
                           Usar esta nota
                         </button>
                       </div>
@@ -325,7 +436,7 @@ export default function PatientDetailPage() {
           </div>
         </div>
 
-        {/* Right column */}
+        {/* ── Right column ── */}
         <div className="space-y-4">
           {/* Perfil */}
           {p && (
@@ -333,11 +444,11 @@ export default function PatientDetailPage() {
               <h2 className="font-semibold text-gray-800 mb-3">Perfil</h2>
               <div className="grid grid-cols-2 gap-x-3 gap-y-3">
                 {[
-                  { label: 'Edad', value: p.age ? `${p.age} años` : '—' },
-                  { label: 'Sexo', value: p.sex === 'male' ? 'Masc.' : p.sex === 'female' ? 'Fem.' : p.sex ? 'Otro' : '—' },
-                  { label: 'Estatura', value: p.heightCm ? `${p.heightCm} cm` : '—' },
-                  { label: 'Peso', value: p.weightKg ? `${p.weightKg} kg` : '—' },
-                  { label: 'Objetivo', value: GOAL_LABELS[p.goal ?? ''] ?? '—' },
+                  { label: 'Edad',      value: p.age       ? `${p.age} años`  : '—' },
+                  { label: 'Sexo',      value: p.sex === 'male' ? 'Masc.' : p.sex === 'female' ? 'Fem.' : p.sex ? 'Otro' : '—' },
+                  { label: 'Estatura',  value: p.heightCm  ? `${p.heightCm} cm`  : '—' },
+                  { label: 'Peso',      value: p.weightKg  ? `${p.weightKg} kg`  : '—' },
+                  { label: 'Objetivo',  value: GOAL_LABELS[p.goal ?? ''] ?? '—' },
                   { label: 'Actividad', value: ACTIVITY_LABELS[p.activityLevel ?? ''] ?? '—' },
                 ].map(item => (
                   <div key={item.label}>
@@ -346,12 +457,22 @@ export default function PatientDetailPage() {
                   </div>
                 ))}
               </div>
-              {imc && imcCategory && (
+              {imc && imcCat && (
                 <div className="mt-3 pt-3 border-t border-gray-100">
                   <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">IMC</p>
                   <p className="text-sm font-bold text-gray-800">
-                    {imc} <span className={`font-medium text-xs ${imcCategory.color}`}>— {imcCategory.label}</span>
+                    {imc} <span className={`font-medium text-xs ${imcCat.color}`}>— {imcCat.label}</span>
                   </p>
+                </div>
+              )}
+              {/* Tags display */}
+              {tags.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-1.5">
+                  {tags.map(tag => (
+                    <span key={tag} className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${TAG_COLORS[tag] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {tag}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
@@ -364,10 +485,10 @@ export default function PatientDetailPage() {
               <div className="space-y-2.5">
                 {[
                   { label: 'Mantenimiento', value: p.maintenanceCalories ? `${Math.round(p.maintenanceCalories)} kcal` : '—' },
-                  { label: 'Meta diaria', value: p.targetCalories ? `${Math.round(p.targetCalories)} kcal` : '—' },
-                  { label: 'Proteína meta', value: p.proteinGoalG ? `${Math.round(p.proteinGoalG)} g` : '—' },
-                  { label: 'Carbohidratos', value: p.carbGoalG ? `${Math.round(p.carbGoalG)} g` : '—' },
-                  { label: 'Grasas', value: p.fatGoalG ? `${Math.round(p.fatGoalG)} g` : '—' },
+                  { label: 'Meta diaria',   value: p.targetCalories      ? `${Math.round(p.targetCalories)} kcal`      : '—' },
+                  { label: 'Proteína',      value: p.proteinGoalG        ? `${Math.round(p.proteinGoalG)} g`           : '—' },
+                  { label: 'Carbohidratos', value: p.carbGoalG           ? `${Math.round(p.carbGoalG)} g`              : '—' },
+                  { label: 'Grasas',        value: p.fatGoalG            ? `${Math.round(p.fatGoalG)} g`               : '—' },
                 ].map(m => (
                   <div key={m.label} className="flex justify-between items-center">
                     <span className="text-xs text-gray-500">{m.label}</span>
@@ -378,29 +499,14 @@ export default function PatientDetailPage() {
             </div>
           )}
 
-          {/* Plan de comidas */}
-          {data.mealPlans.length > 0 && (
+          {/* Tendencia de peso */}
+          {data.weightLogs.length >= 2 && (
             <div className="bg-white rounded-2xl border border-gray-100 p-5">
-              <h2 className="font-semibold text-gray-800 mb-3">Plan de comidas</h2>
-              <div className="space-y-2">
-                {data.mealPlans.map(mp => (
-                  <div key={mp.id} className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-prof-400" />
-                    <span className="text-sm text-gray-700 flex-1">{mp.name}</span>
-                    {mp.time && <span className="text-[10px] text-gray-400">{mp.time}</span>}
-                    <span className="text-xs font-medium text-prof-600">{Math.round(mp.targetKcal)} kcal</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Historial de peso */}
-          {data.weightLogs.length > 0 && (
-            <div className="bg-white rounded-2xl border border-gray-100 p-5">
-              <h2 className="font-semibold text-gray-800 mb-3">Historial de peso</h2>
-              <div className="space-y-2">
-                {[...data.weightLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5).map((w, i, arr) => {
+              <h2 className="font-semibold text-gray-800 mb-3">Tendencia de peso</h2>
+              <WeightTrendChart logs={data.weightLogs} />
+              {/* Latest entries */}
+              <div className="mt-3 space-y-1.5">
+                {[...data.weightLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3).map((w, i, arr) => {
                   const prev = arr[i + 1];
                   const diff = prev ? +(w.weightKg - prev.weightKg).toFixed(1) : null;
                   return (
@@ -423,15 +529,54 @@ export default function PatientDetailPage() {
             </div>
           )}
 
+          {/* Plan de comidas */}
+          {data.mealPlans.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-5">
+              <h2 className="font-semibold text-gray-800 mb-3">Plan de comidas</h2>
+              <div className="space-y-2">
+                {data.mealPlans.map(mp => (
+                  <div key={mp.id} className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-prof-400" />
+                    <span className="text-sm text-gray-700 flex-1">{mp.name}</span>
+                    {mp.time && <span className="text-[10px] text-gray-400">{mp.time}</span>}
+                    <span className="text-xs font-medium text-prof-600">{Math.round(mp.targetKcal)} kcal</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Acciones */}
           <div className="space-y-2">
             <button
               onClick={() => setMsgModal(true)}
               className="w-full flex items-center justify-center gap-2 text-sm font-medium text-prof-700 bg-prof-50 hover:bg-prof-100 border border-prof-200 py-2.5 rounded-xl transition-colors"
             >
-              <MessageSquare size={16} />
-              Enviar mensaje
+              <MessageSquare size={16} /> Enviar mensaje
             </button>
+
+            {/* Message history */}
+            {msgHistory.length > 0 && (
+              <button
+                onClick={() => setShowMsgHist(v => !v)}
+                className="w-full flex items-center justify-center gap-2 text-xs font-medium text-gray-500 hover:bg-gray-50 border border-gray-200 py-2 rounded-xl transition-colors"
+              >
+                <History size={14} /> Historial de mensajes ({msgHistory.length}) {showMsgHist ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+            )}
+            {showMsgHist && (
+              <div className="space-y-2">
+                {msgHistory.slice(0, 5).map(m => (
+                  <div key={m.id} className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-[10px] text-gray-400 mb-1">
+                      {new Date(m.sentAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                    <p className="text-xs text-gray-600">{m.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <button
               onClick={handleRevoke}
               disabled={revoking}
@@ -449,23 +594,20 @@ export default function PatientDetailPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold">Mensaje para {data.name.split(' ')[0]}</h3>
-              <button onClick={() => { setMsgModal(false); setMsgSent(''); }} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+              <h3 className="text-lg font-bold text-gray-900">Mensaje para {data.name.split(' ')[0]}</h3>
+              <button onClick={() => { setMsgModal(false); setMsgText(''); }} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
             </div>
             <p className="text-xs text-gray-400 mb-3">Se enviará como notificación push al paciente.</p>
             <textarea
-              value={msgText}
-              onChange={e => setMsgText(e.target.value)}
-              rows={4}
-              maxLength={300}
+              value={msgText} onChange={e => setMsgText(e.target.value)}
+              rows={4} maxLength={300}
               className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-prof-400"
               placeholder="Escribe tu mensaje…"
               autoFocus
             />
             <p className="text-xs text-gray-400 text-right mb-3">{msgText.length}/300</p>
-            {msgSent && <p className="text-sm text-green-600 mb-3">{msgSent}</p>}
             <div className="flex gap-2">
-              <button onClick={() => { setMsgModal(false); setMsgSent(''); }} className="flex-1 py-2.5 rounded-xl text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">Cancelar</button>
+              <button onClick={() => { setMsgModal(false); setMsgText(''); }} className="flex-1 py-2.5 rounded-xl text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">Cancelar</button>
               <button
                 onClick={handleSendMessage}
                 disabled={sendingMsg || !msgText.trim()}
