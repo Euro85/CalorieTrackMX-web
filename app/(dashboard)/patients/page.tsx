@@ -4,12 +4,13 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Users, Search, RefreshCw, UserPlus, X, AlertCircle,
-  Clock, ChevronRight, TrendingUp, TrendingDown, Minus, Activity, Tag,
+  Clock, ChevronRight, TrendingUp, TrendingDown, Minus, Activity, Tag, LayoutGrid, List,
 } from 'lucide-react';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
 import { loadAllTagsMap, TAG_COLORS } from '@/lib/tags';
 import { PatientCardSkeleton } from '@/components/Skeleton';
+import PatientTable from '@/components/PatientTable';
 import type { PatientSummary } from '@/lib/types';
 
 const GOAL_ICONS: Record<string, React.ReactNode> = {
@@ -29,6 +30,7 @@ export default function PatientsPage() {
   const [filter,      setFilter]      = useState<FilterType>('all');
   const [sortBy,      setSortBy]      = useState<SortBy>('lastActivity');
   const [tagsMap,     setTagsMap]     = useState<Record<number, string[]>>({});
+  const [viewMode,    setViewMode]    = useState<'cards' | 'table'>('cards');
   const [linkModal,   setLinkModal]   = useState(false);
   const [linkCode,    setLinkCode]    = useState('');
   const [linking,     setLinking]     = useState(false);
@@ -124,6 +126,22 @@ export default function PatientsPage() {
           <p className="text-sm text-gray-500 mt-0.5">{patients.length} pacientes · actualización automática cada 5 min</p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setViewMode('cards')}
+              className={`p-2 transition-colors ${viewMode === 'cards' ? 'bg-prof-50 text-prof-600' : 'text-gray-400 hover:bg-gray-50'}`}
+              title="Vista tarjetas"
+            >
+              <LayoutGrid size={16} />
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`p-2 transition-colors ${viewMode === 'table' ? 'bg-prof-50 text-prof-600' : 'text-gray-400 hover:bg-gray-50'}`}
+              title="Vista tabla"
+            >
+              <List size={16} />
+            </button>
+          </div>
           <button onClick={load} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="Actualizar">
             <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -206,6 +224,8 @@ export default function PatientsPage() {
             </button>
           )}
         </div>
+      ) : viewMode === 'table' ? (
+        <PatientTable patients={displayed} tagsMap={tagsMap} today={today} />
       ) : (
         <div className="space-y-2">
           {displayed.map(p => {

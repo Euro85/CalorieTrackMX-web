@@ -12,9 +12,12 @@ import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
 import { useToast } from '@/components/Toast';
 import { loadTemplates } from '@/lib/templates';
+import { loadMsgTemplates } from '@/lib/msgTemplates';
 import { getPatientTags, setPatientTags, TAG_OPTIONS, TAG_COLORS } from '@/lib/tags';
 import { getSentMessages, addSentMessage } from '@/lib/messageHistory';
 import MacroBar from '@/components/MacroBar';
+import WeekComparison from '@/components/WeekComparison';
+import KcalTrendChart from '@/components/KcalTrendChart';
 import KcalRing from '@/components/KcalRing';
 import WeeklyBarChart from '@/components/WeeklyBarChart';
 import CalendarHeatmap from '@/components/CalendarHeatmap';
@@ -70,6 +73,8 @@ export default function PatientDetailPage() {
   // Templates
   const [templates,     setTemplates]    = useState<NoteTemplate[]>([]);
   const [showTemplates, setShowTemplates]= useState(false);
+  const [msgTemplates,  setMsgTemplates] = useState<ReturnType<typeof loadMsgTemplates>>([]);
+  const [showMsgTpls,   setShowMsgTpls]  = useState(false);
 
   // Tags
   const [tags,          setTags]         = useState<string[]>([]);
@@ -115,6 +120,7 @@ export default function PatientDetailPage() {
   useEffect(() => {
     setNoteHistory(loadNoteHistory());
     setTemplates(loadTemplates());
+    setMsgTemplates(loadMsgTemplates());
     setTags(getPatientTags(patientUserId));
     setMsgHistory(getSentMessages(patientUserId));
   }, [patientUserId, loadNoteHistory]);
@@ -300,6 +306,19 @@ export default function PatientDetailPage() {
               <h2 className="font-semibold text-gray-800 mb-3">Calorías — últimos 7 días</h2>
               <WeeklyBarChart logs={data.recentLogs} targetKcal={targetKcal || undefined} />
               {targetKcal > 0 && <p className="text-xs text-gray-400 text-center mt-1">— Meta: {Math.round(targetKcal)} kcal</p>}
+            </div>
+          )}
+
+          {/* Semana actual vs anterior */}
+          {data.recentLogs.length >= 3 && (
+            <WeekComparison logs={data.recentLogs} />
+          )}
+
+          {/* Tendencia calórica con proyección 7 días */}
+          {data.recentLogs.length >= 5 && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-5">
+              <h2 className="font-semibold text-gray-800 mb-3">Tendencia calórica — proyección 7 días</h2>
+              <KcalTrendChart logs={data.recentLogs} targetKcal={targetKcal || undefined} />
             </div>
           )}
 
@@ -598,6 +617,30 @@ export default function PatientDetailPage() {
               <button onClick={() => { setMsgModal(false); setMsgText(''); }} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
             </div>
             <p className="text-xs text-gray-400 mb-3">Se enviará como notificación push al paciente.</p>
+            {msgTemplates.length > 0 && (
+              <div className="mb-3">
+                <button
+                  onClick={() => setShowMsgTpls(v => !v)}
+                  className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium mb-2"
+                >
+                  <FileText size={12} /> Usar plantilla {showMsgTpls ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                </button>
+                {showMsgTpls && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {msgTemplates.slice(0, 4).map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => { setMsgText(t.content); setShowMsgTpls(false); }}
+                        className="text-left p-2 rounded-xl bg-prof-50 border border-prof-100 hover:border-prof-300 transition-colors"
+                      >
+                        <p className="text-xs font-semibold text-prof-700 truncate">{t.title}</p>
+                        <p className="text-[10px] text-prof-500 truncate">{t.content}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <textarea
               value={msgText} onChange={e => setMsgText(e.target.value)}
               rows={4} maxLength={300}

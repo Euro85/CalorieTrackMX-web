@@ -3,19 +3,21 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Users, LogOut, Settings, BarChart2, Moon, Sun, FileText } from 'lucide-react';
+import { Users, LogOut, Settings, BarChart2, Moon, Sun, FileText, LayoutDashboard, Sigma } from 'lucide-react';
 import { clearSession, getUser } from '@/lib/auth';
 
 const NAV = [
-  { href: '/patients',  icon: Users,     label: 'Mis pacientes' },
-  { href: '/templates', icon: FileText,   label: 'Plantillas' },
-  { href: '/settings',  icon: Settings,   label: 'Ajustes' },
+  { href: '/dashboard',  icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/patients',   icon: Users,            label: 'Mis pacientes' },
+  { href: '/templates',  icon: FileText,          label: 'Plantillas' },
+  { href: '/calculator', icon: Sigma,             label: 'Calculadora' },
+  { href: '/settings',   icon: Settings,          label: 'Ajustes' },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
-  const user = getUser();
+  const router   = useRouter();
+  const user     = getUser();
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
@@ -30,10 +32,7 @@ export default function Sidebar() {
     document.documentElement.classList.toggle('dark', next);
   };
 
-  const handleLogout = () => {
-    clearSession();
-    router.push('/login');
-  };
+  const handleLogout = () => { clearSession(); router.push('/login'); };
 
   return (
     <aside className="h-screen w-64 bg-white border-r border-gray-200 flex flex-col fixed left-0 top-0 z-30">
@@ -51,7 +50,7 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      <nav className="flex-1 px-3 py-4 space-y-0.5">
         {NAV.map(({ href, icon: Icon, label }) => {
           const active = pathname === href || (href !== '/' && pathname.startsWith(href));
           return (
@@ -64,7 +63,7 @@ export default function Sidebar() {
                   : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
               }`}
             >
-              <Icon size={18} className={active ? 'text-prof-600' : 'text-gray-400'} />
+              <Icon size={17} className={active ? 'text-prof-600' : 'text-gray-400'} />
               {label}
             </Link>
           );
@@ -72,8 +71,7 @@ export default function Sidebar() {
       </nav>
 
       {/* Bottom */}
-      <div className="px-3 py-4 border-t border-gray-100 space-y-1">
-        {/* Dark mode toggle */}
+      <div className="px-3 py-4 border-t border-gray-100 space-y-0.5">
         <button
           onClick={toggleDark}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
@@ -82,7 +80,6 @@ export default function Sidebar() {
           {dark ? 'Modo claro' : 'Modo oscuro'}
         </button>
 
-        {/* User info */}
         <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl">
           <div className="w-8 h-8 rounded-full bg-prof-100 flex items-center justify-center text-prof-700 font-bold text-sm">
             {user?.name?.charAt(0).toUpperCase() ?? 'P'}
@@ -97,8 +94,7 @@ export default function Sidebar() {
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
         >
-          <LogOut size={16} />
-          Cerrar sesión
+          <LogOut size={16} /> Cerrar sesión
         </button>
       </div>
     </aside>
