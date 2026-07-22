@@ -27,6 +27,9 @@ import type { PatientFullData, DayLog } from '@/lib/types';
 import type { NoteTemplate } from '@/lib/templates';
 import type { SentMessage } from '@/lib/messageHistory';
 import { type Indication, parseIndications, appendIndication, serializeIndications } from '@/lib/indications';
+import { INDICATION_PRESETS } from '@/lib/indicationPresets';
+import { recordIndicationSent } from '@/lib/indicationTracker';
+import { getUser } from '@/lib/auth';
 
 const GOAL_LABELS:     Record<string, string> = { lose: 'Bajar de peso', maintain: 'Mantenimiento', gain: 'Ganar masa' };
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -70,9 +73,10 @@ export default function PatientDetailPage() {
 
   // Templates
   const [templates,     setTemplates]    = useState<NoteTemplate[]>([]);
-  const [showTemplates, setShowTemplates]= useState(false);
-  const [msgTemplates,  setMsgTemplates] = useState<ReturnType<typeof loadMsgTemplates>>([]);
-  const [showMsgTpls,   setShowMsgTpls]  = useState(false);
+  const [showTemplates,  setShowTemplates] = useState(false);
+  const [showPresets,    setShowPresets]   = useState(false);
+  const [msgTemplates,   setMsgTemplates]  = useState<ReturnType<typeof loadMsgTemplates>>([]);
+  const [showMsgTpls,    setShowMsgTpls]   = useState(false);
 
   // Tags
   const [tags,          setTags]         = useState<string[]>([]);
@@ -116,6 +120,16 @@ export default function PatientDetailPage() {
       const serialized = serializeIndications(updated);
       await apiCall('save_professional_notes', { patientUserId, notes: serialized }, getToken()!);
       setIndications(updated);
+      recordIndicationSent(patientUserId);
+
+      // Push al paciente
+      const profName = getUser()?.name ?? 'Tu profesional';
+      apiCall('send_direct_message', {
+        patientUserId,
+        message: newNote.trim(),
+        title: `Nueva indicación de ${profName}`,
+      }, getToken()!).catch(() => {});
+
       setNewNote('');
       setNoteSaved(true);
       setTimeout(() => setNoteSaved(false), 2000);
@@ -384,14 +398,37 @@ export default function PatientDetailPage() {
             </div>
             <p className="text-xs text-gray-400 mb-3">Cada indicación se agrega al historial visible del paciente en su app.</p>
 
-            {/* Plantillas */}
+            {/* Indicaciones rápidas (presets) */}
+            <div className="mb-3">
+              <button
+                onClick={() => setShowPresets(v => !v)}
+                className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium mb-2"
+              >
+                <Send size={12} /> Indicaciones rápidas {showPresets ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </button>
+              {showPresets && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {INDICATION_PRESETS.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setNewNote(p.content); setShowPresets(false); }}
+                      className="px-2.5 py-1.5 rounded-full text-[11px] font-medium bg-prof-50 text-prof-700 border border-prof-100 hover:border-prof-400 hover:bg-prof-100 transition-colors"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Plantillas personalizadas */}
             {templates.length > 0 && (
               <div className="mb-3">
                 <button
                   onClick={() => setShowTemplates(v => !v)}
-                  className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium mb-2"
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 font-medium mb-2"
                 >
-                  <FileText size={13} /> Usar plantilla {showTemplates ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  <FileText size={13} /> Mis plantillas {showTemplates ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 </button>
                 {showTemplates && (
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -399,10 +436,10 @@ export default function PatientDetailPage() {
                       <button
                         key={t.id}
                         onClick={() => { setNewNote(t.content); setShowTemplates(false); }}
-                        className="text-left p-2.5 rounded-xl bg-prof-50 border border-prof-100 hover:border-prof-300 transition-colors"
+                        className="text-left p-2.5 rounded-xl bg-gray-50 border border-gray-200 hover:border-prof-300 transition-colors"
                       >
-                        <p className="text-xs font-semibold text-prof-700 truncate">{t.title}</p>
-                        <p className="text-[10px] text-prof-500 truncate">{t.content}</p>
+                        <p className="text-xs font-semibold text-gray-700 truncate">{t.title}</p>
+                        <p className="text-[10px] text-gray-500 truncate">{t.content}</p>
                       </button>
                     ))}
                   </div>

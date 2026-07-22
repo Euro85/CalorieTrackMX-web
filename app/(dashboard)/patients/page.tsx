@@ -4,11 +4,12 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Users, Search, RefreshCw, UserPlus, X, AlertCircle,
-  Clock, ChevronRight, TrendingUp, TrendingDown, Minus, Activity, Tag, LayoutGrid, List,
+  Clock, ChevronRight, TrendingUp, TrendingDown, Minus, Activity, Tag, LayoutGrid, List, Send,
 } from 'lucide-react';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
 import { loadAllTagsMap, TAG_COLORS } from '@/lib/tags';
+import { daysSinceIndication } from '@/lib/indicationTracker';
 import { PatientCardSkeleton } from '@/components/Skeleton';
 import PatientTable from '@/components/PatientTable';
 import type { PatientSummary } from '@/lib/types';
@@ -259,6 +260,23 @@ export default function PatientsPage() {
                     ))}
                   </div>
                   <p className="text-xs text-gray-400 truncate">{p.email}</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    {(() => {
+                      const days = daysSinceIndication(p.userId);
+                      if (days === null) return null;
+                      if (days === 0) return (
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-prof-600 bg-prof-50 px-1.5 py-0.5 rounded-full">
+                          <Send size={9} /> Ind. hoy
+                        </span>
+                      );
+                      if (days <= 7) return (
+                        <span className="text-[10px] text-prof-500">Ind. hace {days}d</span>
+                      );
+                      return (
+                        <span className="text-[10px] text-orange-500">Ind. hace {days}d</span>
+                      );
+                    })()}
+                  </div>
                   <div className="flex items-center gap-3 mt-1">
                     {pct != null && (
                       <div className="flex items-center gap-1.5">
