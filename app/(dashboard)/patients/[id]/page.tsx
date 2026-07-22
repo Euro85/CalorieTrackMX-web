@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  ArrowLeft, Brain, Send, Trash2, Save, CheckCircle, Loader2,
+  ArrowLeft, Brain, Send, Trash2, CheckCircle, Loader2,
   AlertCircle, ChevronRight, Clock, X, MessageSquare,
   ChevronDown, ChevronUp, Download, FileText, Tag, History,
 } from 'lucide-react';
@@ -26,13 +26,12 @@ import MacroTrendChart from '@/components/MacroTrendChart';
 import type { PatientFullData, DayLog } from '@/lib/types';
 import type { NoteTemplate } from '@/lib/templates';
 import type { SentMessage } from '@/lib/messageHistory';
+import { type Indication, parseIndications, appendIndication, serializeIndications } from '@/lib/indications';
 
 const GOAL_LABELS:     Record<string, string> = { lose: 'Bajar de peso', maintain: 'Mantenimiento', gain: 'Ganar masa' };
 const ACTIVITY_LABELS: Record<string, string> = {
   sedentary: 'Sedentario', light: 'Ligero', moderate: 'Moderado', active: 'Activo', very_active: 'Muy activo',
 };
-
-interface NoteHistoryItem { id: number; content: string; savedAt: string; }
 
 function exportCSV(data: PatientFullData) {
   const rows: (string | number)[][] = [
@@ -60,11 +59,10 @@ export default function PatientDetailPage() {
   const [data,          setData]         = useState<PatientFullData | null>(null);
   const [loading,       setLoading]      = useState(true);
   const [error,         setError]        = useState('');
-  const [notes,         setNotes]        = useState('');
-  const [savingNotes,   setSavingNotes]  = useState(false);
-  const [notesSaved,    setNotesSaved]   = useState(false);
-  const [noteHistory,   setNoteHistory]  = useState<NoteHistoryItem[]>([]);
-  const [showHistory,   setShowHistory]  = useState(false);
+  const [indications,   setIndications]  = useState<Indication[]>([]);
+  const [newNote,       setNewNote]      = useState('');
+  const [savingNote,    setSavingNote]   = useState(false);
+  const [noteSaved,     setNoteSaved]    = useState(false);
   const [msgModal,      setMsgModal]     = useState(false);
   const [msgText,       setMsgText]      = useState('');
   const [sendingMsg,    setSendingMsg]   = useState(false);
@@ -84,26 +82,12 @@ export default function PatientDetailPage() {
   const [msgHistory,    setMsgHistory]   = useState<SentMessage[]>([]);
   const [showMsgHist,   setShowMsgHist]  = useState(false);
 
-  const noteHistoryKey = `ctmx_notes_history_${patientUserId}`;
-  const loadNoteHistory = useCallback((): NoteHistoryItem[] => {
-    try { return JSON.parse(localStorage.getItem(noteHistoryKey) ?? '[]'); } catch { return []; }
-  }, [noteHistoryKey]);
-
-  const saveNoteHistory = useCallback((content: string) => {
-    const next: NoteHistoryItem[] = [
-      { id: Date.now(), content, savedAt: new Date().toISOString() },
-      ...loadNoteHistory().slice(0, 19),
-    ];
-    localStorage.setItem(noteHistoryKey, JSON.stringify(next));
-    setNoteHistory(next);
-  }, [noteHistoryKey, loadNoteHistory]);
-
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
       const result = await apiCall<PatientFullData>('get_patient_data', { patientUserId }, getToken()!);
       setData(result);
-      setNotes(result.professionalNotes ?? '');
+      setIndications(parseIndications(result.professionalNotes));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error al cargar datos');
     } finally {
@@ -118,26 +102,40 @@ export default function PatientDetailPage() {
   }, [load]);
 
   useEffect(() => {
-    setNoteHistory(loadNoteHistory());
     setTemplates(loadTemplates());
     setMsgTemplates(loadMsgTemplates());
     setTags(getPatientTags(patientUserId));
     setMsgHistory(getSentMessages(patientUserId));
-  }, [patientUserId, loadNoteHistory]);
+  }, [patientUserId]);
 
-  const handleSaveNotes = async () => {
-    if (!notes.trim()) return;
-    setSavingNotes(true);
+  const handleAddIndication = async () => {
+    if (!newNote.trim()) return;
+    setSavingNote(true);
     try {
-      await apiCall('save_professional_notes', { patientUserId, notes }, getToken()!);
-      saveNoteHistory(notes);
-      setNotesSaved(true);
-      setTimeout(() => setNotesSaved(false), 2500);
-      toast('Indicaciones guardadas correctamente', 'success');
+      const updated = appendIndication(indications, newNote);
+      const serialized = serializeIndications(updated);
+      await apiCall('save_professional_notes', { patientUserId, notes: serialized }, getToken()!);
+      setIndications(updated);
+      setNewNote('');
+      setNoteSaved(true);
+      setTimeout(() => setNoteSaved(false), 2000);
+      toast('Indicación enviada al paciente', 'success');
     } catch (e: unknown) {
-      toast(e instanceof Error ? e.message : 'Error al guardar notas', 'error');
+      toast(e instanceof Error ? e.message : 'Error al guardar indicación', 'error');
     } finally {
-      setSavingNotes(false);
+      setSavingNote(false);
+    }
+  };
+
+  const handleDeleteIndication = async (id: string) => {
+    const updated = indications.filter(i => i.id !== id);
+    const serialized = serializeIndications(updated);
+    try {
+      await apiCall('save_professional_notes', { patientUserId, notes: serialized }, getToken()!);
+      setIndications(updated);
+      toast('Indicación eliminada', 'success');
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Error al eliminar indicación', 'error');
     }
   };
 
@@ -371,17 +369,22 @@ export default function PatientDetailPage() {
             </div>
           )}
 
-          {/* Notas + plantillas + historial */}
+          {/* Mis indicaciones */}
           <div className="bg-white rounded-2xl border border-gray-100 p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold text-gray-800">Mis indicaciones</h2>
+            <div className="flex items-center justify-between mb-1">
+              <div>
+                <h2 className="font-semibold text-gray-800">Mis indicaciones</h2>
+                {indications.length > 0 && (
+                  <p className="text-[10px] text-gray-400">{indications.length} indicación{indications.length !== 1 ? 'es' : ''} en el historial del paciente</p>
+                )}
+              </div>
               <Link href={`/patients/${id}/ai`} className="flex items-center gap-1.5 text-xs text-prof-600 hover:text-prof-700 font-medium">
                 <Brain size={13} /> Consultar NutriIA
               </Link>
             </div>
-            <p className="text-xs text-gray-400 mb-2">Estas indicaciones se envían como contexto a la IA del paciente.</p>
+            <p className="text-xs text-gray-400 mb-3">Cada indicación se agrega al historial visible del paciente en su app.</p>
 
-            {/* Templates */}
+            {/* Plantillas */}
             {templates.length > 0 && (
               <div className="mb-3">
                 <button
@@ -395,7 +398,7 @@ export default function PatientDetailPage() {
                     {templates.slice(0, 6).map(t => (
                       <button
                         key={t.id}
-                        onClick={() => { setNotes(t.content); setShowTemplates(false); }}
+                        onClick={() => { setNewNote(t.content); setShowTemplates(false); }}
                         className="text-left p-2.5 rounded-xl bg-prof-50 border border-prof-100 hover:border-prof-300 transition-colors"
                       >
                         <p className="text-xs font-semibold text-prof-700 truncate">{t.title}</p>
@@ -407,49 +410,51 @@ export default function PatientDetailPage() {
               </div>
             )}
 
+            {/* Compositor */}
             <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              rows={5}
+              value={newNote}
+              onChange={e => setNewNote(e.target.value)}
+              rows={4}
               className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 resize-y focus:outline-none focus:ring-2 focus:ring-prof-400"
-              placeholder={`Ej: Paciente en fase de volumen. Priorizar proteína ≥${p?.proteinGoalG ? Math.round(p.proteinGoalG) : 150}g/día.`}
+              placeholder={`Nueva indicación para ${data.name.split(' ')[0]}…`}
             />
-            <div className="flex items-center justify-between mt-2">
-              <span className="text-xs text-gray-400">{notes.length} caracteres</span>
+            <div className="flex items-center justify-between mt-2 mb-5">
+              <span className="text-xs text-gray-400">{newNote.length} caracteres</span>
               <button
-                onClick={handleSaveNotes}
-                disabled={savingNotes || !notes.trim()}
+                onClick={handleAddIndication}
+                disabled={savingNote || !newNote.trim()}
                 className="flex items-center gap-1.5 bg-prof-600 hover:bg-prof-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
               >
-                {savingNotes ? <Loader2 size={12} className="animate-spin" /> : notesSaved ? <CheckCircle size={12} /> : <Save size={12} />}
-                {notesSaved ? 'Guardado' : 'Guardar indicaciones'}
+                {savingNote ? <Loader2 size={12} className="animate-spin" /> : noteSaved ? <CheckCircle size={12} /> : <Send size={12} />}
+                {noteSaved ? 'Enviada ✓' : 'Enviar al paciente'}
               </button>
             </div>
 
-            {/* Historial de notas */}
-            {noteHistory.length > 0 && (
-              <div className="mt-4 border-t border-gray-100 pt-4">
-                <button
-                  onClick={() => setShowHistory(v => !v)}
-                  className="flex items-center gap-2 text-xs font-medium text-gray-500 hover:text-gray-700"
-                >
-                  <Clock size={13} /> Historial ({noteHistory.length}) {showHistory ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                </button>
-                {showHistory && (
-                  <div className="mt-3 space-y-2">
-                    {noteHistory.slice(0, 5).map(n => (
-                      <div key={n.id} className="bg-gray-50 rounded-xl p-3">
-                        <p className="text-[10px] text-gray-400 mb-1">
-                          {new Date(n.savedAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                        <p className="text-xs text-gray-600 line-clamp-3">{n.content}</p>
-                        <button onClick={() => { setNotes(n.content); setShowHistory(false); }} className="mt-1.5 text-[10px] text-prof-600 hover:text-prof-700 font-medium">
-                          Usar esta nota
-                        </button>
-                      </div>
-                    ))}
+            {/* Historial de indicaciones */}
+            {indications.length > 0 && (
+              <div className="border-t border-gray-100 pt-4 space-y-3">
+                <p className="text-xs font-medium text-gray-500">Historial de indicaciones</p>
+                {indications.map((ind, idx) => (
+                  <div key={ind.id} className="bg-gray-50 rounded-xl p-3 group">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <p className="text-[10px] text-gray-400">
+                        {ind.createdAt === new Date(0).toISOString()
+                          ? 'Indicación anterior'
+                          : new Date(ind.createdAt).toLocaleString('es-MX', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        }
+                        {idx === 0 && <span className="ml-1.5 text-prof-600 font-semibold">· Más reciente</span>}
+                      </p>
+                      <button
+                        onClick={() => handleDeleteIndication(ind.id)}
+                        className="text-gray-300 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+                        title="Eliminar esta indicación"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-700 whitespace-pre-wrap">{ind.content}</p>
                   </div>
-                )}
+                ))}
               </div>
             )}
           </div>

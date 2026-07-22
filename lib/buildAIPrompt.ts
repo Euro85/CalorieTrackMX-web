@@ -1,4 +1,5 @@
 import type { PatientFullData } from './types';
+import { parseIndications, isLegacyDate } from './indications';
 
 const GOAL_LABELS: Record<string, string> = {
   lose: 'Bajar de peso',
@@ -65,8 +66,16 @@ export function buildPatientSystemPrompt(patient: PatientFullData): string {
   }
 
   if (patient.professionalNotes?.trim()) {
-    lines.push('### Mis indicaciones previas para este paciente');
-    lines.push(patient.professionalNotes.trim());
+    const indications = parseIndications(patient.professionalNotes);
+    if (indications.length > 0) {
+      lines.push('### Mis indicaciones para este paciente (más recientes primero)');
+      indications.slice(0, 3).forEach((ind, i) => {
+        const dateStr = isLegacyDate(ind.createdAt)
+          ? ''
+          : ` — ${new Date(ind.createdAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+        lines.push(`**${i + 1}${dateStr}:** ${ind.content}`);
+      });
+    }
   }
 
   lines.push('');
