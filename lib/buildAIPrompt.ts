@@ -16,9 +16,18 @@ const ACTIVITY_LABELS: Record<string, string> = {
 
 export function buildPatientSystemPrompt(patient: PatientFullData): string {
   const p = patient.profile;
+  const now = new Date();
+  const todayFull = now.toLocaleDateString('es-MX', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const todayWeekday = now.toLocaleDateString('es-MX', { weekday: 'long' });
+
   const lines: string[] = [
     'Eres NutriIA, asistente de nutrición clínica para profesionales de la salud.',
     'Responde en español, con rigor científico y lenguaje profesional.',
+    'NUNCA recomiendes aplicaciones externas (MyFitnessPal, Cronometer, FatSecret u otras). El paciente usa CalorieTrackMX.',
+    '',
+    `FECHA DE HOY: ${todayFull} (${todayWeekday})`,
     '',
     `## Paciente: ${patient.name} (${patient.email})`,
   ];
@@ -79,7 +88,7 @@ export function buildPatientSystemPrompt(patient: PatientFullData): string {
   }
 
   lines.push('');
-  lines.push('Responde de forma útil y accionable para el profesional. Puedes sugerir ajustes al plan, alertar sobre déficits, o analizar la adherencia.');
+  lines.push(`Responde de forma útil y accionable para el profesional. Puedes sugerir ajustes al plan, alertar sobre déficits, o analizar la adherencia. Hoy es ${todayFull} — ten en cuenta el día para evaluar el plan de entrenamiento del paciente si existe.`);
 
   return lines.join('\n');
 }
