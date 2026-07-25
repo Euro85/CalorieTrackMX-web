@@ -3,12 +3,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Send, Loader2, Trash2, Brain, AlertCircle, Settings } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, Trash2, Brain, AlertCircle, Settings, SendHorizonal, CheckCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { apiCall } from '@/lib/api';
 import { getToken } from '@/lib/auth';
 import { streamChat, loadAISettings } from '@/lib/aiService';
 import { buildPatientSystemPrompt } from '@/lib/buildAIPrompt';
-import ChatBubble from '@/components/ChatBubble';
+import { parseIndications, appendIndication, serializeIndications } from '@/lib/indications';
 import type { PatientFullData, ChatMessage } from '@/lib/types';
 
 const INITIAL_GREETING = (name: string) =>
@@ -25,6 +27,9 @@ export default function PatientAIPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [aiError, setAiError] = useState('');
+  const [sendingInd, setSendingInd] = useState<string | null>(null);
+  const [sentInd, setSentInd] = useState<Set<string>>(new Set());
+  const [currentNotes, setCurrentNotes] = useState<string>('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,6 +50,34 @@ export default function PatientAIPage() {
       setLoading(false);
     }
   }, [patientUserId]);
+
+  // Cargar notas actuales del paciente para poder adjuntar indicaciones
+  useEffect(() => {
+    if (!patient) return;
+    setCurrentNotes(patient.professionalNotes ?? '');
+  }, [patient]);
+
+  const handleSendAsIndication = useCallback(async (msgId: string, content: string) => {
+    if (sendingInd || sentInd.has(msgId)) return;
+    setSendingInd(msgId);
+    try {
+      const existing = parseIndications(currentNotes);
+      // Truncar a 800 caracteres para que quepa como indicación
+      const trimmed = content.replace(/[#*`_]/g, '').replace(/\n+/g, ' ').trim().slice(0, 800);
+      const updated = appendIndication(existing, trimmed);
+      const serialized = serializeIndications(updated);
+      await apiCall('save_professional_notes', { patientUserId, notes: serialized }, getToken()!);
+      setCurrentNotes(serialized);
+      setSentInd(prev => new Set(prev).add(msgId));
+      // También enviar push
+      await apiCall('send_direct_message', {
+        patientUserId,
+        message: trimmed.slice(0, 200),
+        title: 'Nueva indicación de tu profesional',
+      }, getToken()!).catch(() => {});
+    } catch { /* silent */ }
+    setSendingInd(null);
+  }, [sendingInd, sentInd, currentNotes, patientUserId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -151,16 +184,55 @@ export default function PatientAIPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {messages.map(msg => (
-          msg.content || msg.role === 'user' ? (
-            <ChatBubble key={msg.id} message={msg} />
-          ) : (
+        {messages.map(msg => {
+          if (!msg.content && msg.role !== 'user') return (
             <div key={msg.id} className="flex items-center gap-2 text-gray-400 text-sm">
               <Loader2 size={15} className="animate-spin" />
               <span>NutriIA pensando…</span>
             </div>
-          )
-        ))}
+          );
+          if (msg.role === 'user') return (
+            <div key={msg.id} className="flex justify-end">
+              <div className="max-w-[75%] bg-prof-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm">
+                {msg.content}
+              </div>
+            </div>
+          );
+          // Mensaje del AI — con botón "Enviar al paciente"
+          const isSending = sendingInd === msg.id;
+          const isSent = sentInd.has(msg.id);
+          return (
+            <div key={msg.id} className="flex justify-start">
+              <div className="flex items-start gap-2.5 max-w-[85%]">
+                <div className="w-7 h-7 rounded-full bg-prof-100 flex items-center justify-center flex-shrink-0 mt-0.5 text-prof-700 font-bold text-xs">
+                  IA
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm">
+                    <div className="prose prose-sm prose-gray max-w-none text-gray-800 [&>p:last-child]:mb-0 [&>p]:mb-2 [&>ul]:mb-2 [&>ol]:mb-2">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    </div>
+                  </div>
+                  {msg.id !== 'greeting' && (
+                    <button
+                      onClick={() => handleSendAsIndication(msg.id, msg.content)}
+                      disabled={isSending || isSent}
+                      className={`self-start flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border transition-colors ${
+                        isSent
+                          ? 'border-green-200 bg-green-50 text-green-700'
+                          : 'border-prof-200 text-prof-600 hover:bg-prof-50 disabled:opacity-50'
+                      }`}
+                    >
+                      {isSending ? <Loader2 size={11} className="animate-spin" /> :
+                       isSent ? <CheckCircle size={11} /> : <SendHorizonal size={11} />}
+                      {isSent ? 'Enviado al paciente' : 'Enviar al paciente'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
 
         {aiError && (
           <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
